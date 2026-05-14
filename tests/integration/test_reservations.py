@@ -1,5 +1,6 @@
 import os
 import sys
+from collections.abc import Generator
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -15,21 +16,24 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.infrastructure.database.connection import get_db
-from app.infrastructure.database.models import Base, LocationModel, RoomModel
+from app.infrastructure.database.models import Base, LocationModel, ReservationModel, RoomModel
 from app.main import app
 
 JWT_SECRET = os.environ["JWT_SECRET"]
 USER_ID = UUID("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+ADMIN_ID = UUID("dddddddd-dddd-dddd-dddd-dddddddddddd")
+OTHER_USER_ID = UUID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
 ROOM_ID = UUID("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
 LOCATION_ID = UUID("cccccccc-cccc-cccc-cccc-cccccccccccc")
 
 
-def make_token(user_id: UUID = USER_ID) -> str:
+def make_token(user_id: UUID = USER_ID, role: str = "user") -> str:
     return jwt.encode(
         {
             "sub": str(user_id),
             "email": "jefferson@teste.com",
             "name": "Usuario Teste",
+            "role": role,
         },
         JWT_SECRET,
         algorithm="HS256",
@@ -61,7 +65,7 @@ def build_client() -> TestClient:
     with testing_session() as db:
         seed_test_data(db)
 
-    def override_get_db() -> Session:
+    def override_get_db() -> Generator[Session, None, None]:
         db = testing_session()
         try:
             yield db
@@ -143,3 +147,66 @@ def test_create_reservation_rejects_past_start_time() -> None:
         )
 
     assert response.status_code == 422
+
+
+def test_regular_user_cannot_delete_another_users_reservation() -> None:
+    with build_client() as client:
+        owner_headers = {"Authorization": f"Bearer {make_token(USER_ID)}"}
+        intruder_headers = {"Authorization": f"Bearer {make_token(OTHER_USER_ID)}"}
+        created = client.post(
+            "/api/v1/reservations",
+            headers=owner_headers,
+            json=make_payload("Reserva de outro usuario", "2026-06-21T13:00:00Z", "2026-06-21T14:00:00Z"),
+        )
+        reservation_id = created.json()["id"]
+        response = client.delete(f"/api/v1/reservations/{reservation_id}", headers=intruder_headers)
+
+    assert created.status_code == 201
+    assert response.status_code == 403
+
+
+def test_admin_can_delete_any_users_reservation() -> None:
+    with build_client() as client:
+        owner_headers = {"Authorization": f"Bearer {make_token(USER_ID)}"}
+        admin_headers = {"Authorization": f"Bearer {make_token(ADMIN_ID, role='admin')}"}
+        created = client.post(
+            "/api/v1/reservations",
+            headers=owner_headers,
+            json=make_payload("Reserva para admin excluir", "2026-06-22T13:00:00Z", "2026-06-22T14:00:00Z"),
+        )
+        reservation_id = created.json()["id"]
+        response = client.delete(f"/api/v1/reservations/{reservation_id}", headers=admin_headers)
+
+    assert created.status_code == 201
+    assert response.status_code == 204
+
+
+def test_list_marks_past_reservations_as_expired() -> None:
+    expired_reservation_id = uuid4()
+    with build_client() as client:
+        db_generator = app.dependency_overrides[get_db]()
+        db = next(db_generator)
+        try:
+            db.add(
+                ReservationModel(
+                    id=expired_reservation_id,
+                    room_id=ROOM_ID,
+                    user_id=USER_ID,
+                    responsible_name="Usuario Teste",
+                    title="Reserva vencida",
+                    description="Reserva antiga nao cancelada",
+                    start_time=datetime(2020, 1, 1, 13, 0, tzinfo=timezone.utc),
+                    end_time=datetime(2020, 1, 1, 14, 0, tzinfo=timezone.utc),
+                    coffee_service=False,
+                    attendees_count=2,
+                )
+            )
+            db.commit()
+        finally:
+            db_generator.close()
+
+        response = client.get("/api/v1/reservations", headers={"Authorization": f"Bearer {make_token()}"})
+
+    assert response.status_code == 200
+    expired = next(item for item in response.json() if item["id"] == str(expired_reservation_id))
+    assert expired["status"] == "expired"

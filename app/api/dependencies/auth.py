@@ -17,6 +17,11 @@ class TokenPayload:
     user_id: UUID
     email: str
     name: str | None = None
+    role: str = "user"
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role.lower() == "admin"
 
 
 def get_current_user(token: str = Depends(oauth2_scheme)) -> TokenPayload:
@@ -26,6 +31,7 @@ def get_current_user(token: str = Depends(oauth2_scheme)) -> TokenPayload:
             user_id=UUID(str(payload["sub"])),
             email=str(payload["email"]),
             name=str(payload.get("name")) if payload.get("name") else None,
+            role=str(payload.get("role", "user")),
         )
     except (JWTError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token invalido") from exc

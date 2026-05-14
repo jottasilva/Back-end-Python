@@ -54,7 +54,7 @@ def update_reservation(
     current_user: TokenPayload = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ReservationResponse:
-    return SqlAlchemyReservationRepository(db).update(reservation_id, payload, current_user.user_id)
+    return SqlAlchemyReservationRepository(db).update(reservation_id, payload, current_user.user_id, current_user.is_admin)
 
 
 @router.patch("/{reservation_id}", response_model=ReservationResponse)
@@ -64,7 +64,7 @@ def patch_reservation(
     current_user: TokenPayload = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ReservationResponse:
-    return SqlAlchemyReservationRepository(db).patch(reservation_id, payload, current_user.user_id)
+    return SqlAlchemyReservationRepository(db).patch(reservation_id, payload, current_user.user_id, current_user.is_admin)
 
 
 @router.delete("/{reservation_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -73,7 +73,7 @@ def delete_reservation(
     current_user: TokenPayload = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    SqlAlchemyReservationRepository(db).delete(reservation_id, current_user.user_id)
+    SqlAlchemyReservationRepository(db).delete(reservation_id, current_user.user_id, current_user.is_admin)
 
 
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
@@ -82,4 +82,4 @@ def bulk_delete_reservations(
     current_user: TokenPayload = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    SqlAlchemyReservationRepository(db).bulk_delete(payload.ids, current_user.user_id)
+    SqlAlchemyReservationRepository(db).bulk_delete(payload.ids, current_user.user_id, current_user.is_admin)

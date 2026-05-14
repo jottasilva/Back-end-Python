@@ -64,8 +64,8 @@ class SqlAlchemyReservationRepository:
         self._db.refresh(reservation)
         return self._to_response(reservation)
 
-    def update(self, reservation_id: UUID, payload: ReservationUpdate, user_id: UUID) -> ReservationResponse:
-        reservation = self._get_owned_model(reservation_id, user_id)
+    def update(self, reservation_id: UUID, payload: ReservationUpdate, user_id: UUID, is_admin: bool = False) -> ReservationResponse:
+        reservation = self._get_editable_model(reservation_id, user_id, is_admin)
         self._ensure_room_exists(payload.room_id)
         self._ensure_no_conflict(payload.room_id, payload.start_time, payload.end_time, exclude_id=reservation.id)
 
@@ -82,8 +82,8 @@ class SqlAlchemyReservationRepository:
         self._db.refresh(reservation)
         return self._to_response(reservation)
 
-    def patch(self, reservation_id: UUID, payload: ReservationPatch, user_id: UUID) -> ReservationResponse:
-        reservation = self._get_owned_model(reservation_id, user_id)
+    def patch(self, reservation_id: UUID, payload: ReservationPatch, user_id: UUID, is_admin: bool = False) -> ReservationResponse:
+        reservation = self._get_editable_model(reservation_id, user_id, is_admin)
         data = payload.model_dump(exclude_unset=True)
 
         room_id = data.get("room_id", reservation.room_id)
@@ -103,18 +103,18 @@ class SqlAlchemyReservationRepository:
         self._db.refresh(reservation)
         return self._to_response(reservation)
 
-    def delete(self, reservation_id: UUID, user_id: UUID) -> None:
-        reservation = self._get_owned_model(reservation_id, user_id)
+    def delete(self, reservation_id: UUID, user_id: UUID, is_admin: bool = False) -> None:
+        reservation = self._get_editable_model(reservation_id, user_id, is_admin)
         self._db.delete(reservation)
         self._db.commit()
 
-    def bulk_delete(self, ids: list[UUID], user_id: UUID) -> None:
+    def bulk_delete(self, ids: list[UUID], user_id: UUID, is_admin: bool = False) -> None:
         reservations = self._db.query(ReservationModel).filter(ReservationModel.id.in_(ids)).all()
         if len(reservations) != len(set(ids)):
             raise ReservationNotFoundError("Uma ou mais reservas nao foram encontradas.")
 
         for reservation in reservations:
-            if reservation.user_id != user_id:
+            if not is_admin and reservation.user_id != user_id:
                 raise ReservationForbiddenError("Somente o dono da reserva pode excluir.")
             self._db.delete(reservation)
 
@@ -151,11 +151,22 @@ class SqlAlchemyReservationRepository:
             raise ReservationNotFoundError("Reserva nao encontrada.")
         return reservation
 
-    def _get_owned_model(self, reservation_id: UUID, user_id: UUID) -> ReservationModel:
+    def _get_editable_model(self, reservation_id: UUID, user_id: UUID, is_admin: bool = False) -> ReservationModel:
         reservation = self._get_model(reservation_id)
-        if reservation.user_id != user_id:
+        if not is_admin and reservation.user_id != user_id:
             raise ReservationForbiddenError("Somente o dono da reserva pode alterar ou excluir.")
         return reservation
+
+    @staticmethod
+    def _as_utc(value: datetime) -> datetime:
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    @classmethod
+    def _status_for(cls, reservation: ReservationModel) -> str:
+        end_time = cls._as_utc(reservation.end_time)
+        return "expired" if end_time < datetime.now(timezone.utc) else "confirmed"
 
     def _to_response(self, reservation: ReservationModel) -> ReservationResponse:
         return ReservationResponse(
@@ -172,5 +183,5 @@ class SqlAlchemyReservationRepository:
             end_time=reservation.end_time,
             coffee_service=reservation.coffee_service,
             attendees_count=reservation.attendees_count,
-            status="confirmed",
+            status=self._status_for(reservation),
         )
