@@ -37,3 +37,12 @@ def update_room(
     db: Session = Depends(get_db),
 ) -> RoomResponse:
     return SqlAlchemyRoomRepository(db).update_room(room_id, payload)
+
+
+@router.delete("/{room_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_room(
+    room_id: UUID,
+    _: TokenPayload = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    SqlAlchemyRoomRepository(db).delete_room(room_id)

@@ -10,6 +10,10 @@ class LocationConflictError(DomainError):
     status_code = 409
 
 
+class RoomConflictError(DomainError):
+    status_code = 409
+
+
 class ReservationForbiddenError(DomainError):
     status_code = 403
 

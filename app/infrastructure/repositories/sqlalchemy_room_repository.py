@@ -4,8 +4,8 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.schemas.location import LocationCreate, LocationResponse, LocationUpdate
 from app.api.v1.schemas.room import RoomCreate, RoomResponse, RoomUpdate
-from app.domain.exceptions import LocationConflictError, ReservationNotFoundError
-from app.infrastructure.database.models import LocationModel, RoomModel
+from app.domain.exceptions import LocationConflictError, ReservationNotFoundError, RoomConflictError
+from app.infrastructure.database.models import LocationModel, ReservationModel, RoomModel
 
 
 class SqlAlchemyRoomRepository:
@@ -70,6 +70,15 @@ class SqlAlchemyRoomRepository:
         self._db.commit()
         self._db.refresh(room)
         return self._to_response(room)
+
+    def delete_room(self, room_id: UUID) -> None:
+        room = self._get_room(room_id)
+        has_reservations = self._db.query(ReservationModel.id).filter(ReservationModel.room_id == room_id).first()
+        if has_reservations:
+            raise RoomConflictError("Nao e possivel excluir uma sala com reservas vinculadas.")
+
+        self._db.delete(room)
+        self._db.commit()
 
     def _ensure_location_exists(self, location_id: UUID) -> None:
         self._get_location(location_id)

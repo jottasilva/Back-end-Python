@@ -53,6 +53,15 @@ def make_payload(title: str, start_time: str, end_time: str) -> dict[str, object
     }
 
 
+def make_room_payload(name: str = "Sala removivel") -> dict[str, object]:
+    return {
+        "locationId": str(LOCATION_ID),
+        "name": name,
+        "capacity": 4,
+        "imageUrl": "https://example.com/removable-room.jpg",
+    }
+
+
 def build_client() -> TestClient:
     engine = create_engine(
         "sqlite+pysqlite:///:memory:",
@@ -210,3 +219,31 @@ def test_list_marks_past_reservations_as_expired() -> None:
     assert response.status_code == 200
     expired = next(item for item in response.json() if item["id"] == str(expired_reservation_id))
     assert expired["status"] == "expired"
+
+
+def test_delete_room_without_reservations() -> None:
+    with build_client() as client:
+        headers = {"Authorization": f"Bearer {make_token()}"}
+        created = client.post("/api/v1/rooms", headers=headers, json=make_room_payload())
+        room_id = created.json()["id"]
+        response = client.delete(f"/api/v1/rooms/{room_id}", headers=headers)
+        listed = client.get("/api/v1/rooms", headers=headers)
+
+    assert created.status_code == 201
+    assert response.status_code == 204
+    assert all(room["id"] != room_id for room in listed.json())
+
+
+def test_delete_room_with_reservations_is_rejected() -> None:
+    with build_client() as client:
+        headers = {"Authorization": f"Bearer {make_token()}"}
+        created_reservation = client.post(
+            "/api/v1/reservations",
+            headers=headers,
+            json=make_payload("Reserva que bloqueia sala", "2026-06-23T13:00:00Z", "2026-06-23T14:00:00Z"),
+        )
+        response = client.delete(f"/api/v1/rooms/{ROOM_ID}", headers=headers)
+
+    assert created_reservation.status_code == 201
+    assert response.status_code == 409
+    assert "reservas vinculadas" in response.json()["detail"]
